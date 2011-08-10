@@ -551,3 +551,83 @@ class AltSliceScheduler(Scheduler):
          info['slice'] = -1
       return
 
+class WaitAndPenaltyShareScheduler(Scheduler):
+   def __init__(self,bitHopper):
+      self.bh = bitHopper
+      self.name = 'scheduler-waitAndPenaltyShare'
+      self.difficultyThreshold = 0.435
+      self.initData()
+      self.index_html = 'index-ryouiki.html'
+      
+   def initData(self,):
+      if self.bh.options.threshold:
+         #self.bh.log_msg("Override difficulty threshold to: " + str(self.bh.options.threshold), cat='scheduler-default')
+         self.difficultyThreshold = self.bh.options.threshold
+
+      for server in self.bh.pool.get_servers():
+          info = self.bh.pool.get_entry(server)
+          info['force'] = 0
+          if 'penalty' not in info:
+              info['penalty'] = 1
+          if 'wait' not in info:
+              info['wait'] = 1
+
+   def select_best_server(self,):
+      #self.bh.log_dbg('select_best_server', cat='scheduler-default')
+      server_name = None
+      difficulty = self.bh.difficulty.get_difficulty()
+      nmc_difficulty = self.bh.difficulty.get_nmc_difficulty()
+      
+      min_progress = self.difficultyThreshold
+  
+      for server in self.bh.pool.get_servers():
+         info = self.bh.pool.get_entry(server)
+         if info['api_lag'] or info['lag']:
+            continue
+         if info['role'] not in ['mine','mine_nmc','mine_slush','mine_charity', 'mine_deepbit']:
+            continue
+         # set penalty 4 instead of mine_slush 
+         if info['role'] in ['mine', 'mine_charity', 'mine_deepbit', 'mine_slush']:
+            shares = info['shares']
+         elif info['role'] == 'mine_nmc':
+            shares = info['shares']*difficulty / nmc_difficulty
+         else:
+            shares = 100* info['shares']
+         
+         progress = shares / difficulty
+         # progress =  wait + (progress * penalty)
+         progress =  float(info['wait']) + progress * float(info['penalty'])
+            
+         if progress< min_progress:
+            min_progress = progress
+            #self.bh.log_dbg('Selecting pool ' + str(server) + ' with shares ' + str(info['shares']), cat='scheduler-default')
+            server_name = server
+         
+      if server_name == None:
+         server_name = self.select_charity_server()
+
+      if server_name == None: return self.select_backup_server()
+      else: return server_name   
+   
+   def select_latehop_server(self):
+      server_name = None
+      max_share_count = 1
+      for server in self.bh.pool.get_servers():
+         info = self.bh.pool.get_entry(server)
+         if info['api_lag'] or info['lag']:
+            continue
+         if info['role'] != 'backup_latehop':
+            continue
+         if info['shares'] > max_share_count:
+            server_name = server
+            max_share_count = info['shares']
+            self.bh.log_dbg('select_latehop_server: ' + str(server), cat='scheduler-default')
+
+      return server_name   
+
+   def server_update(self,):
+      #self.bh.log_dbg('server_update', cat='scheduler-default')
+      
+      #always selects best server this scheduler is greedy
+      
+      return True       
