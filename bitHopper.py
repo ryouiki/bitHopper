@@ -32,10 +32,11 @@ from twisted.internet.defer import Deferred
 from twisted.internet.task import LoopingCall
 from twisted.python import log, failure
 from scheduler import Scheduler
+import twisted.web.client
 
 class BitHopper():
     def __init__(self):
-        self.json_agent = Agent(reactor)
+        self.json_agent = twisted.web.client.Agent(reactor)
         self.lp_agent = Agent(reactor, persistent=True)
         self.new_server = Deferred()
         self.stats_file = None
@@ -69,13 +70,13 @@ class BitHopper():
         reactor.callLater(0.1,self.new_server.callback,work)
         self.new_server = Deferred()
 
-    def get_json_agent(self, ):
+    def get_json_agent(self):
         return self.json_agent
 
-    def get_lp_agent(self, ):
+    def get_lp_agent(self):
         return self.lp_agent
 
-    def get_options(self, ):
+    def get_options(self):
         return self.options
 
     def log_msg(self, msg, **kwargs):
@@ -120,11 +121,11 @@ class BitHopper():
         return
 
     def get_new_server(self, server):
-        if server != self.pool.get_entry(self.pool.get_current()):
-            return self.pool.get_entry(self.pool.get_current())
-        self.pool.get_entry(self.pool.get_current())['lag'] = True
-        self.select_best_server()
-        return self.pool.get_entry(self.pool.get_current())
+        self.pool.get_entry(server)['lag'] = True
+        self.log_bdg('Lagging. :' + server)
+        if server == self.pool.get_current():
+            self.select_best_server()
+        return self.pool.get_current()
 
     def server_update(self, ):
         if self.scheduler.server_update():
@@ -133,12 +134,16 @@ class BitHopper():
     @defer.inlineCallbacks
     def delag_server(self ):
         self.log_dbg('Running Delager')
-        for index in self.pool.get_servers():
-            server = self.pool.get_entry(index)
-            if server['lag'] == True:
+        for server in self.pool.get_servers():
+            info = self.pool.servers[server]
+            if info['lag'] == True:
                 data = yield work.jsonrpc_call(self.json_agent, server,[], self)
+                self.log_dbg('Got' + server + ":" + str(data))
                 if data != None:
-                    server['lag'] = False
+                    info['lag'] = False
+                    self.log_dbg('Delagging')
+                else:
+                    self.log_dbg('Not delagging')
 
     def bitHopper_Post(self,request):
         self.request_store.add(request)
@@ -158,23 +163,21 @@ class BitHopper():
             new_server = self.getwork_store.get_server(data[0][72:136])
             if new_server != None:
                 current = new_server
-        pool_server=self.pool.get_entry(current)
 
-        work.jsonrpc_getwork(self.json_agent, pool_server, data, j_id, request, self)
+        work.jsonrpc_getwork(self.json_agent, current, data, j_id, request, self)
 
         if self.options.debug:
-            self.log_msg('RPC request ' + str(data) + " submitted to " + str(pool_server['name']))
+            self.log_msg('RPC request ' + str(data) + " submitted to " + current)
         else:
             if data == []:
                 #If request contains no data, tell the user which remote procedure was called instead
                 rep = rpc_request['method']
             else:
                 rep = str(data[0][155:163])
-            self.log_msg('RPC request [' + rep + "] submitted to " + str(pool_server['name']))
+            self.log_msg('RPC request [' + rep + "] submitted to " + current)
 
         if data != []:
-            if not self.request_store.closed(request):
-                self.data_callback(current,data, request.getUser(), request.getPassword())        
+            self.data_callback(current,data, request.getUser(), request.getPassword())        
         return server.NOT_DONE_YET
 
     def bitHopperLP(self, value, *methodArgs):
@@ -198,7 +201,7 @@ class BitHopper():
 
             response = json.dumps({"result":value,'error':None,'id':j_id})
             if self.request_store.closed(request):
-                return
+                return value
             request.write(response)
             request.finish()
 
@@ -234,6 +237,7 @@ def main():
     parser.add_option('--altminslicesize', type=int, default=60, help='Override Default Minimum Pool Slice Size of 60 (AltSliceScheduler only)')
     parser.add_option('--altslicejitter', type=int, default=0, help='Add some random variance to slice size, disabled by default (AltSliceScheduler only)')
     parser.add_option('--startLP', action= 'store_true', default = True, help='Seeds the LP module with known pools. Must use it for LP based hopping with deepbit, True by default')
+    parser.add_option('--ip', type = str, default='', help='IP to listen on')
     args, rest = parser.parse_args()
     options = args
     bithopper_global.options = args
@@ -285,10 +289,10 @@ def main():
         startlp.start(60*30)
 
     site = server.Site(website.bitSite(bithopper_global))
-    reactor.listenTCP(options.port, site)
+    reactor.listenTCP(options.port, site,5, options.ip)
     reactor.callLater(0, bithopper_global.pool.update_api_servers, bithopper_global)
     delag_call = LoopingCall(bithopper_global.delag_server)
-    delag_call.start(119)
+    delag_call.start(10)
     reactor.run()
     bithopper_global.db.close()
 
