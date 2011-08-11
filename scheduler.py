@@ -554,7 +554,6 @@ class AltSliceScheduler(Scheduler):
 class WaitAndPenaltyShareScheduler(Scheduler):
    def __init__(self,bitHopper):
       self.bh = bitHopper
-      self.name = 'scheduler-waitAndPenaltyShare'
       self.difficultyThreshold = 0.435
       self.initData()
       self.index_html = 'index-ryouiki.html'
@@ -628,6 +627,7 @@ class WaitAndPenaltyShareScheduler(Scheduler):
    def server_update(self,):
       #self.bh.log_dbg('server_update', cat='scheduler-default')
       
-      #always selects best server this scheduler is greedy
+      #always selects best server
       
       return True       
+  
